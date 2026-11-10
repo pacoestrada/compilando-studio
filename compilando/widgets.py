@@ -1,14 +1,26 @@
 import math
 from pathlib import Path
 import numpy as np
-from PyQt5.QtCore import Qt, QRectF, QPointF, pyqtSignal, QMimeData, QUrl
+from PyQt5.QtCore import Qt, QRectF, QPointF, pyqtSignal, QMimeData, QUrl, QEvent
 from PyQt5.QtGui import QColor, QPainter, QPen, QLinearGradient, QFont, QDrag, QPolygonF
-from PyQt5.QtWidgets import QWidget, QListWidget, QAbstractItemView, QSlider, QStyle, QStyleOptionSlider
+from PyQt5.QtWidgets import QWidget, QFrame, QListWidget, QAbstractItemView, QSlider, QStyle, QStyleOptionSlider
 from .core import RATE, FORMATS, db
 
 def clock(frame):
     seconds = max(0, frame) / RATE
     return f'{int(seconds)//60:02d}:{int(seconds)%60:02d}.{int(seconds*10)%10}'
+
+class FitPanel(QFrame):
+    """Pass wrapped labels' real height through splitters, also after font changes."""
+    def event(self, event):
+        result=super().event(event)
+        if event.type() in (QEvent.LayoutRequest,QEvent.Resize,QEvent.Show):
+            layout=self.layout()
+            if layout:
+                height=max(layout.totalMinimumSize().height(),layout.totalHeightForWidth(self.width()))
+                if height!=self.minimumHeight():
+                    self.setMinimumHeight(height)
+        return result
 
 class PeakMeter(QWidget):
     def __init__(self, parent=None):
@@ -117,7 +129,6 @@ class Timeline(QWidget):
     changed = pyqtSignal()
     editStarted = pyqtSignal()
     dropped = pyqtSignal(str, int, int)
-    cueRequested = pyqtSignal(int)
     scrubStarted = pyqtSignal()
     scrubFinished = pyqtSignal()
     volumeChanged = pyqtSignal()
@@ -128,7 +139,6 @@ class Timeline(QWidget):
         self.cursor = 0
         self.selected_id = ''
         self.track = 0
-        self.mode = 'cursor'
         self.zoom = 1.0
         self.view = 0
         self.drag = None
@@ -143,6 +153,8 @@ class Timeline(QWidget):
     def span(self):
         if self.drag:
             return self.drag['span']
+        if self.volume_drag:
+            return self.volume_drag['span']
         return max(RATE, int(max(RATE*10, self.project.frames*1.08) / self.zoom))
 
     def x(self, frame):
@@ -186,20 +198,19 @@ class Timeline(QWidget):
         return handles
 
     def volume_hit(self, point):
+        """The whole waveform is a volume target; the playhead never wins here."""
         c = self.hit(point)
-        if not c or c.track != 1 or point.y() < self.rect_for(c).top()+25:
+        if not c or point.y() < self.rect_for(c).top()+24:
             return None
+        if c.track == 0:
+            return c, 'gain', False
         for kind, handle in self.volume_handles(c):
             if abs(point.x()-handle.x()) <= 9 and abs(point.y()-handle.y()) <= 9:
                 return c, kind, True
         frame = min(c.end-1, max(c.start, self.frame(point.x())))
-        gain = float(self.project.music_envelope(c, [frame])[0])
-        curve_y = self.volume_y(c, c.gain+20*math.log10(max(gain, 1e-9)))
-        if self.mode == 'volume' or abs(point.y()-curve_y) <= 6:
-            start = self.voice_return(c)
-            kind = 'bed' if start is not None and frame >= start+RATE*self.project.music_duck_fade(c)/2 else 'gain'
-            return c, kind, False
-        return None
+        start = self.voice_return(c)
+        kind = 'bed' if start is not None and frame >= start else 'gain'
+        return c, kind, False
 
     def drag_volume(self, point):
         d = self.volume_drag
@@ -209,7 +220,8 @@ class Timeline(QWidget):
         dy, dx = point.y()-d['y'], point.x()-d['x']
         if not d['moved'] and abs(dy) < 2 and abs(dx) < 3:
             return
-        value = max(-60, min(24 if d['kind']=='gain' else 0, round((d['value']-dy*84/52)*2)/2))
+        step = .1 if d['fine'] else .5
+        value = max(-60, min(24 if d['kind']=='gain' else 0, round(d['value']-dy*step, 1)))
         duration = d['duration']
         if d['kind']=='bed' and d['handle'] and abs(dx) >= 3:
             duration = max(.1, min(30, round((d['duration']+dx/(self.width()-28)*self.span/RATE)*10)/10))
@@ -281,7 +293,7 @@ class Timeline(QWidget):
             if c.track == 1 and len(pixels)>1:
                 p.setPen(QPen(QColor('#f2d179'), 2))
                 p.drawPolyline(QPolygonF([QPointF(x,self.volume_y(c,c.gain+20*math.log10(max(float(gain),1e-9)))) for x,gain in zip(pixels,envelope)]))
-                if c.id == self.selected_id or self.mode == 'volume':
+                if c.id == self.selected_id:
                     for kind, point in self.volume_handles(c):
                         p.setPen(QPen(QColor('#ffe6a0'), 2));p.setBrush(QColor('#293338'))
                         p.drawEllipse(point, 5, 5)
@@ -305,41 +317,36 @@ class Timeline(QWidget):
         if event.button() != Qt.LeftButton:
             return
         self.setFocus()
-        # The ruler and the playhead always seek, even in clip/marker modes.
-        line_hit = abs(event.x()-self.x(self.cursor)) <= 7
         c = self.hit(event.localPos())
-        volume = self.volume_hit(event.localPos()) if self.mode in ('cursor','volume') else None
-        if volume and event.y()>=31 and (self.mode=='volume' or not line_hit):
-            c, kind, handle = volume
-            self.selected_id=c.id;self.track=1;self.selected.emit(c.id)
-            self.volume_drag={'id':c.id,'kind':kind,'handle':handle,'x':event.x(),'y':event.y(),
-                'value':c.gain if kind=='gain' else self.project.music_bed(c),
-                'duration':self.project.music_duck_fade(c),'duration_override':c.duck_fade,'moved':False}
-            self.setCursor(Qt.SizeAllCursor if kind=='bed' and handle else Qt.SizeVerCursor)
-            self.update();return
-        waveform_seek = self.mode=='cursor' and (not c or event.y()>=self.rect_for(c).top()+24)
-        if event.y()<31 or line_hit or waveform_seek:
-            if event.y()>=31 and not line_hit:
-                self.track = 0 if event.y()<145 else 1
-                if c:self.selected_id=c.id;self.selected.emit(c.id)
+        # Seeking belongs to the ruler (including its triangle) and empty space.
+        # A single click on a clip only selects it, even under the blue line.
+        if event.y()<31 or not c:
             self.scrubbing=True;self.scrubStarted.emit()
             self.cursor=min(self.project.frames,self.frame(event.x()));self.seeked.emit(self.cursor);self.update();return
-        self.editStarted.emit()
-        frame = self.frame(event.x())
-        self.cursor = frame
-        self.track = 0 if event.y() < 145 else 1
-        self.seeked.emit(frame)
-        if self.mode == 'mark' and self.track == 0:
-            self.cueRequested.emit(frame)
-            return
-        if c:
-            self.selected_id = c.id
-            self.selected.emit(c.id)
-            if self.mode in ('clip','track') or event.y() < self.rect_for(c).top()+24:
-                self.drag = {'id':c.id,'x':event.x(),'state':self.project.state(),'moved':False,'span':self.span,'whole':self.mode=='track'}
-        if not self.drag:
-            self.scrubbing=True;self.scrubStarted.emit()
+        self.selected_id=c.id;self.track=c.track;self.selected.emit(c.id)
+        volume = self.volume_hit(event.localPos())
+        if volume:
+            c, kind, handle = volume
+            self.volume_drag={'id':c.id,'kind':kind,'handle':handle,'x':event.x(),'y':event.y(),
+                'value':c.gain if kind=='gain' else self.project.music_bed(c),
+                'duration':self.project.music_duck_fade(c),'duration_override':c.duck_fade,'moved':False,
+                'fine':bool(event.modifiers()&Qt.ShiftModifier),'span':self.span}
+            self.setCursor(Qt.SizeAllCursor if kind=='bed' and handle else Qt.SizeVerCursor)
+            self.update();return
+        self.drag = {'id':c.id,'x':event.x(),'state':self.project.state(),'moved':False,
+                     'span':self.span,'whole':bool(event.modifiers()&Qt.ShiftModifier)}
+        self.setCursor(Qt.ClosedHandCursor)
         self.update()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button()!=Qt.LeftButton:
+            return
+        # A deliberate double click positions playback without changing a level.
+        self.drag=None;self.volume_drag=None
+        if not self.scrubbing:
+            self.scrubbing=True;self.scrubStarted.emit()
+        self.cursor=min(self.project.frames,self.frame(event.x()))
+        self.seeked.emit(self.cursor);self.update()
 
     def mouseMoveEvent(self, event):
         if self.volume_drag:
@@ -349,6 +356,8 @@ class Timeline(QWidget):
         elif self.drag:
             if not self.drag['moved'] and abs(event.x()-self.drag['x']) < 3:
                 return
+            if not self.drag['moved']:
+                self.editStarted.emit()
             self.project.restore(self.drag['state'])
             delta = int((event.x()-self.drag['x'])/max(1,self.width()-28)*self.drag['span'])
             self.project.move(self.drag['id'], delta, self.drag['whole'], False)
@@ -356,21 +365,23 @@ class Timeline(QWidget):
             self.update()
         else:
             c = self.hit(event.localPos())
-            volume = self.volume_hit(event.localPos()) if self.mode in ('cursor','volume') else None
-            if volume and (self.mode=='volume' or abs(event.x()-self.x(self.cursor))>7):
+            volume = self.volume_hit(event.localPos())
+            if volume:
                 _, kind, handle = volume
                 self.setCursor(Qt.SizeAllCursor if kind=='bed' and handle else Qt.SizeVerCursor)
-                self.setToolTip('Arrastra arriba/abajo: volumen del clip.' if kind=='gain' else
-                    'Arrastra arriba/abajo: música bajo la voz. Arrastra el tirador lateralmente: duración de la bajada.')
+                self.setToolTip(('Arrastra ↑↓: volumen del clip.' if kind=='gain' else
+                    'Arrastra ↑↓: música bajo la voz. Tirador ↔: duración de la bajada.')+
+                    '\nMayús: ajuste fino. Doble clic: situar la reproducción aquí.')
                 return
-            if event.y()<31 or abs(event.x()-self.x(self.cursor))<=7:
-                self.setCursor(Qt.SizeHorCursor);self.setToolTip('Arrastra el cursor para avanzar o retroceder.')
+            if not c or event.y()<31:
+                self.setCursor(Qt.SizeHorCursor);self.setToolTip('Clic o arrastre: avanzar / retroceder.')
             else:
-                self.setCursor(Qt.OpenHandCursor if c and (self.mode in ('clip','track') or event.y()<self.rect_for(c).top()+24) else Qt.CrossCursor)
-            if c:
-                self.setToolTip(f'{self.project.assets[c.asset].path.name}\n{clock(c.start)} — {clock(c.end)} · arrastra la cabecera')
+                self.setCursor(Qt.OpenHandCursor)
+                self.setToolTip(f'{self.project.assets[c.asset].path.name}\nClic: seleccionar. Arrastra: mover clip. Mayús+arrastra: toda la pista.')
 
     def mouseReleaseEvent(self, event):
+        if event.button()!=Qt.LeftButton:
+            return
         if self.volume_drag:
             self.drag_volume(event.localPos());moved=self.volume_drag['moved'];self.volume_drag=None
             if moved:self.changed.emit()

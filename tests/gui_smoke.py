@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory() as tmp:
         end=time.monotonic()+10
         while w.busy and time.monotonic()<end:app.processEvents();QTest.qWait(10)
         assert not w.busy,'background job timed out'
-        app.processEvents()
+        w.activateWindow();app.processEvents()
     w.import_voice(str(voice));wait_job()
     assert w.project.frames==30*RATE
     w.timeline.setFocus();QTest.keyClick(w.timeline,Qt.Key_Right)
@@ -43,7 +43,7 @@ with tempfile.TemporaryDirectory() as tmp:
     w.seek(RATE);w.select_track(0);w.timeline.setFocus();QTest.keyClick(w.timeline,Qt.Key_I,Qt.ControlModifier)
     assert len([c for c in w.project.clips if c.track==0])==4
     c=w.project.find(w.timeline.selected_id);before=c.start
-    w.mode('clip');r=w.timeline.rect_for(c);p=QPointF(r.x()+10,r.y()+8)
+    r=w.timeline.rect_for(c);p=QPointF(r.x()+10,r.y()+8)
     app.sendEvent(w.timeline,QMouseEvent(QEvent.MouseButtonPress,p,Qt.LeftButton,Qt.LeftButton,Qt.NoModifier))
     app.sendEvent(w.timeline,QMouseEvent(QEvent.MouseMove,p+QPointF(30,0),Qt.NoButton,Qt.LeftButton,Qt.NoModifier))
     app.sendEvent(w.timeline,QMouseEvent(QEvent.MouseButtonRelease,p+QPointF(30,0),Qt.LeftButton,Qt.NoButton,Qt.NoModifier))

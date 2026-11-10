@@ -51,16 +51,16 @@ with tempfile.TemporaryDirectory() as tmp:
     assert .15*w.project.frames<w.timeline.cursor<.25*w.project.frames
     assert w.timeline.cursor<late
     assert w.position.value()==w.timeline.cursor
-    # Ruler dragging works in mark mode without inserting or moving clips.
-    w.mode('mark');timeline=w.timeline
+    # Ruler dragging works without a mode switch or any change to the montage.
+    timeline=w.timeline
     p1=QPoint(int(timeline.x(7*RATE)),15);p2=QPoint(int(timeline.x(27*RATE)),15)
     QTest.mousePress(timeline,Qt.LeftButton,pos=p1)
     app.sendEvent(timeline,QMouseEvent(QEvent.MouseMove,QPointF(p2),Qt.NoButton,Qt.LeftButton,Qt.NoModifier))
     QTest.mouseRelease(timeline,Qt.LeftButton,pos=p2)
     assert abs(timeline.cursor-27*RATE)<RATE/5
     assert w.project.state()==frozen,'seeking must not edit the project'
-    # Grab the line itself lower down, away from the ruler.
-    p1=QPoint(int(timeline.x(timeline.cursor)),110);p2=QPoint(int(timeline.x(16*RATE)),110)
+    # Grab the blue triangle in the ruler to go back.
+    p1=QPoint(int(timeline.x(timeline.cursor)),25);p2=QPoint(int(timeline.x(16*RATE)),25)
     QTest.mousePress(timeline,Qt.LeftButton,pos=p1)
     app.sendEvent(timeline,QMouseEvent(QEvent.MouseMove,QPointF(p2),Qt.NoButton,Qt.LeftButton,Qt.NoModifier))
     QTest.mouseRelease(timeline,Qt.LeftButton,pos=p2)
@@ -80,9 +80,9 @@ with tempfile.TemporaryDirectory() as tmp:
     w.playing=False;w.play=real_play
     w.duck_fade.setValue(3);assert w.project.music_duck_fade(w.music_target())==3
     w.undo();assert w.project.music_duck_fade(w.music_target())==5
-    w.zoom(0);w.seek(10*RATE);w.mode('cursor')
+    w.zoom(0);w.seek(10*RATE)
     w.music_folder=folder;w.refresh_music();app.processEvents()
     w.grab().save('/tmp/compilando-studio-011.png')
     w.project.dirty=False;w.close();app.processEvents()
     assert not errors,errors
-print('PASS: insert-and-assign button; five-second defaults; click/drag seeking both directions; ruler/playhead in mark mode; zoom-independent seeking; playback resumes once; editable/undoable fade.')
+print('PASS: insert-and-assign button; five-second defaults; click/drag seeking both directions; ruler/triangle without changing tools; zoom-independent seeking; playback resumes once; editable/undoable fade.')

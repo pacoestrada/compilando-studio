@@ -1,5 +1,18 @@
 # Cambios
 
+## 0.1.4 — 2026-11-10
+
+- Edición directa sin siete botones de herramienta/selección: clic para seleccionar,
+  onda arriba/abajo para volumen y cabecera para mover el clip.
+- La línea azul no intercepta la selección ni el volumen de voz o música.
+- Bajo la voz, arrastrar la música ajusta su fondo; en el tramo solo, su ganancia.
+- Mayús permite afinar el volumen o mover toda la pista desde una cabecera.
+- Regla/triángulo y barra de posición para avanzar; doble clic en la onda para situarse.
+- Desplazamiento de la consola si falta altura; mínimos de los paneles recalculados
+  al cambiar el zoom o las letras, evitando solapamientos con Guardar audio.
+- Pruebas de gestos sin cambiar de modo, audio exportado, deshacer, selección,
+  desplazamiento de clips/pistas y tamaños de ventana/fuente.
+
 ## 0.1.3 — 2026-11-10
 
 - Curva musical editable: tirador de volumen y tirador de fondo/fundido.

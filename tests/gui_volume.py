@@ -1,14 +1,14 @@
-"""Regressions for the volume controls reported in Paco's 0.1.2 screenshot."""
+"""Direct editing: clip selection, volume, transport, undo and layout isolation."""
 from pathlib import Path
 import tempfile
 import wave
 import numpy as np
 from PyQt5.QtCore import Qt, QPoint, QPointF, QEvent, QSettings
-from PyQt5.QtGui import QMouseEvent
+from PyQt5.QtGui import QMouseEvent, QFont
 from PyQt5.QtWidgets import QApplication, QMessageBox
 from PyQt5.QtTest import QTest
 from compilando.core import RATE, Project
-from compilando.ui import Studio
+from compilando.ui import Studio, STYLE
 
 app = QApplication([])
 errors = []
@@ -34,10 +34,10 @@ with tempfile.TemporaryDirectory() as tmp:
     def music_rms(at, project=None):
         a = (project or w.project).render(int(at*RATE), 2000, track=1)
         return float(np.sqrt(np.mean(a*a)))
-    def drag(a, b):
-        QTest.mousePress(timeline, Qt.LeftButton, pos=QPoint(round(a.x()),round(a.y())))
-        app.sendEvent(timeline, QMouseEvent(QEvent.MouseMove,b,Qt.NoButton,Qt.LeftButton,Qt.NoModifier))
-        QTest.mouseRelease(timeline,Qt.LeftButton,pos=QPoint(round(b.x()),round(b.y())))
+    def drag(a, b, modifiers=Qt.NoModifier):
+        QTest.mousePress(timeline, Qt.LeftButton, modifiers, pos=QPoint(round(a.x()),round(a.y())))
+        app.sendEvent(timeline, QMouseEvent(QEvent.MouseMove,b,Qt.NoButton,Qt.LeftButton,modifiers))
+        QTest.mouseRelease(timeline,Qt.LeftButton,modifiers,pos=QPoint(round(b.x()),round(b.y())))
         app.processEvents()
     # The numeric control and fader update immediately, including the waveform.
     baseline = music_rms(7)
@@ -53,12 +53,16 @@ with tempfile.TemporaryDirectory() as tmp:
     assert p.find(first).gain == -11
     QTest.mouseClick(w.reset_clip_gain,Qt.LeftButton)
     assert p.find(first).gain == 0
-    # Selecting a track changes only selection, never gain or the playhead.
-    state = p.state();cursor = timeline.cursor
-    QTest.mouseClick(w.track_buttons[0],Qt.LeftButton)
+    # A single click anywhere on a clip selects without seeking, pausing or editing.
+    state = p.state();cursor = timeline.cursor;history=len(p.undo_stack)
+    seek_events=[];timeline.seeked.connect(seek_events.append)
+    QTest.mouseClick(timeline,Qt.LeftButton,pos=QPoint(round(timeline.x(cursor)),90))
     assert timeline.track == 0 and p.state()==state and timeline.cursor==cursor
-    QTest.mouseClick(w.track_buttons[1],Qt.LeftButton)
-    assert timeline.selected_id==first and w.track_buttons[1].isChecked()
+    QTest.mouseClick(timeline,Qt.LeftButton,pos=QPoint(round(timeline.x(cursor)),195))
+    assert timeline.selected_id==first and p.state()==state and timeline.cursor==cursor
+    assert not seek_events and len(p.undo_stack)==history
+    QTest.keyClick(timeline,Qt.Key_Up);assert timeline.track==0
+    QTest.keyClick(timeline,Qt.Key_Down);assert timeline.selected_id==first
     # The former read-only curve can be dragged directly, with one Undo per gesture.
     before=p.state();undo=len(p.undo_stack)
     handle=dict(timeline.volume_handles(p.find(first)))['gain']
@@ -68,15 +72,51 @@ with tempfile.TemporaryDirectory() as tmp:
     edited=p.state();w.undo();assert p.state()==before
     w.undo(True);assert p.state()==edited
     w.undo()
-    # Volume mode takes precedence over a coincident playhead; ruler still seeks.
-    w.mode('volume');handle=dict(timeline.volume_handles(p.find(first)))['bed']
+    # A coincident playhead never steals volume dragging, with no mode switch.
+    handle=dict(timeline.volume_handles(p.find(first)))['bed']
     w.seek(timeline.frame(handle.x()));cursor=timeline.cursor
     before=p.state();baseline_bed=music_rms(20)
-    drag(handle,handle+QPointF(0,-9))
+    drag(handle,handle+QPointF(0,-14))
     assert p.find(first).bed > -24 and timeline.cursor==cursor
     assert p.find(second).bed is None and p.bed==-24
     assert music_rms(20)>baseline_bed*2 and w.bed.value()==round(p.find(first).bed*10)
     w.undo();assert p.state()==before
+    # Away from the thin curve, the entire music waveform edits the bed.
+    w.seek(21*RATE);cursor=timeline.cursor
+    point=QPointF(timeline.x(cursor),185)
+    assert abs(point.y()-timeline.volume_y(p.find(first),-24))>10
+    w.playing=True  # Selection/volume must not pause or seek an active transport.
+    drag(point,point+QPointF(0,10))
+    assert p.find(first).bed==-29 and timeline.cursor==cursor and w.playing
+    assert p.find(second).bed is None
+    w.undo();assert p.state()==before
+    # Fine adjustment and voice volume share the same direct interaction.
+    drag(point,point+QPointF(0,-10),Qt.ShiftModifier)
+    assert p.find(first).bed==-23
+    w.undo();assert p.state()==before
+    voice_point=QPointF(timeline.x(21*RATE),90)
+    voice_id=timeline.hit(voice_point).id
+    drag(voice_point,voice_point+QPointF(0,8))
+    assert p.find(voice_id).gain==-4 and timeline.cursor==cursor
+    w.undo();assert p.state()==before
+    # Header selection must not seek. Header drag moves one clip; Shift moves track.
+    header=QPointF(timeline.x(7*RATE),160)
+    original_starts={c.id:c.start for c in p.clips}
+    drag(header,header+QPointF(22,0))
+    assert p.find(first).start>original_starts[first]
+    assert all(c.start==original_starts[c.id] for c in p.clips if c.id!=first)
+    assert timeline.cursor==cursor
+    w.undo();assert p.state()==before
+    drag(header,header+QPointF(22,0),Qt.ShiftModifier)
+    delta=p.find(first).start-original_starts[first]
+    assert delta>0 and p.find(second).start-original_starts[second]==delta
+    assert all(c.start==original_starts[c.id] for c in p.clips if c.track==0)
+    w.undo();assert p.state()==before
+    # Double click deliberately seeks; it never leaves a volume gesture active.
+    QTest.mouseDClick(timeline,Qt.LeftButton,pos=QPoint(round(timeline.x(18*RATE)),190))
+    QTest.mouseRelease(timeline,Qt.LeftButton,pos=QPoint(round(timeline.x(18*RATE)),190))
+    assert abs(timeline.cursor-18*RATE)<RATE/4 and p.state()==before
+    assert timeline.volume_drag is None and not timeline.scrubbing
     # Horizontal movement of the low handle edits the actual fade duration.
     handle=dict(timeline.volume_handles(p.find(first)))['bed']
     fade_before=p.music_duck_fade(p.find(first))
@@ -115,11 +155,33 @@ with tempfile.TemporaryDirectory() as tmp:
     w.bed.setValue(-240);w.duck_fade.setValue(5);w.clip_gain.setValue(-3)
     w.music_folder=root;w.refresh_music();w.output.setText('episodio-demo')
     w.resize(1450,960);app.processEvents()
-    w.grab().save('/tmp/compilando-studio-013-volumen.png')
-    for width,height in [(1050,720),(1450,920)]:
-        w.resize(width,height);app.processEvents()
+    w.grab().save('/tmp/compilando-studio-014-edicion.png')
+    def settle():
+        for _ in range(8):app.processEvents()
+    def check_layout():
         assert w.clip_gain.isVisible() and w.timeline.width()>=400
-        assert w.timeline.mapTo(w.centralWidget(),QPoint(0,w.timeline.height())).y() <= w.position.mapTo(w.centralWidget(),QPoint(0,0)).y(), 'Position control overlaps the music'
+        console=w.console_scroll.widget()
+        def top(widget):return widget.mapTo(console,QPoint(0,0)).y()
+        def bottom(widget):return widget.mapTo(console,QPoint(0,widget.height())).y()
+        assert bottom(timeline)<=top(w.position), 'Position control overlaps music'
+        assert bottom(w.editor_panel)<=top(w.insert_cue_button), 'Editor overlaps insertion row'
+        assert bottom(w.workspace)<=top(w.delivery), 'Editor/rack overlaps export'
+        assert bottom(w.insert_cue_button)<bottom(w.editor_area), 'Cue escapes editor'
+        assert bottom(w.fade)<bottom(w.rack), 'Music controls escape rack'
+        assert bottom(w.output)<=top(w.files), 'Export overlaps files'
+        assert bottom(w.files)<=bottom(w.delivery), 'Files escape delivery'
+    for width,height in [(1050,720),(1450,920)]:
+        w.resize(width,height);settle();check_layout()
+        # Dragging the splitter cannot compress the rack or editor below its minimum.
+        w.vertical_splitter.setSizes([200,900]);settle();check_layout()
+        w.vertical_splitter.setSizes([900,100]);settle();check_layout()
+        for zoom in (0,2):w.zoom(zoom);settle();check_layout()
+    # Linux desktop text scaling is independent from Qt's pixel scaling.
+    font=QFont(app.font());font.setPointSize(15);app.setFont(font)
+    w.setStyleSheet(STYLE.replace('13px','18px'))
+    w.resize(1450,920);settle();check_layout()
+    assert w.console_scroll.verticalScrollBar().maximum()>0
+    w.grab().save('/tmp/compilando-studio-014-letra-grande.png')
     w.project.dirty=False;w.close();app.processEvents()
     assert not errors,errors
-print('PASS: immediate gain/fader/waveform; selectors; editable curve; per-clip bed/fade; cursor isolation; one-step undo; zoom; save/reload; exported samples.')
+print('PASS: direct selection and volume across playhead; fine adjustment; header/track movement; double-click/ruler seek; one-step undo; per-clip audio export; small/large fonts, zoom and splitter layout.')

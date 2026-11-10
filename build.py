@@ -8,7 +8,7 @@ import zipfile
 import tarfile
 import hashlib
 ROOT=Path(__file__).resolve().parent
-VERSION='0.1.3'
+VERSION='0.1.4'
 DIST=ROOT/'dist'
 DIST.mkdir(exist_ok=True)
 # Explicit source list: never ship repository metadata, recordings or caches.
