@@ -3,6 +3,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import runpy
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,7 +14,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT/'dist/windows'
-VERSION = '0.1.2'
+VERSION = runpy.run_path(str(ROOT/'compilando/__init__.py'))['__version__']
 FFMPEG_URL = 'https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-9.0.2-essentials_build.zip'
 FFMPEG_SHA = '60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba'
 

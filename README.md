@@ -1,4 +1,4 @@
-# Compilando Studio · Radio Edition 0.1.2
+# Compilando Studio · Radio Edition 0.1.3
 
 Editor de podcast para GNU/Linux. Edición no destructiva de voz y músicas,
 con aspecto inspirado en mesas de radio clásicas, medidores digitales reales
@@ -21,14 +21,14 @@ localmente, sin cuenta ni servicios de pago.
 ## Instalación en Linux Mint / Ubuntu
 
 1. Descomprime el ZIP.
-2. Abre **compilando-studio_0.1.2_all.deb** con el instalador de paquetes.
+2. Abre **compilando-studio_0.1.3_all.deb** con el instalador de paquetes.
 3. Instala el paquete y sus dependencias. Aparecerá **Compilando Studio** en
    el menú de aplicaciones, dentro de Sonido y vídeo.
 
 Alternativa desde una terminal abierta en la carpeta descomprimida:
 
 ```sh
-sudo apt install ./compilando-studio_0.1.2_all.deb
+sudo apt install ./compilando-studio_0.1.3_all.deb
 ```
 
 Para ejecutar el código sin instalar el paquete, con las dependencias ya
@@ -37,13 +37,16 @@ disponibles, ejecuta `sh run.sh` desde la raíz del repositorio, o
 Requiere Python 3.10+, NumPy, PyQt5, Qt Multimedia y FFmpeg. Audacity es opcional.
 El paquete está pensado para Linux Mint 22 / Ubuntu 24.04 y sistemas compatibles.
 
-## Actualizar desde 0.1.0 o 0.1.1
+## Actualizar desde 0.1.0, 0.1.1 o 0.1.2
 
 Guarda el proyecto y cierra Compilando Studio. Instala el nuevo `.deb` encima
 del anterior y vuelve a abrir tu proyecto. No hace falta desinstalar. Los
 proyectos de 0.1.1 conservan sus cortes y tiempos guardados. Los de 0.1.0 usan
 una bajada de 5 segundos, que puedes cambiar y guardar. Los fundidos de un
 segundo se conservan para suavizar el inicio y final de cada música.
+
+0.1.3 abre los proyectos anteriores y añade ajustes de fondo y fundido por clip.
+Los proyectos guardados por 0.1.3 requieren 0.1.3 o posterior para reabrirse.
 
 ## Primer episodio
 
@@ -52,7 +55,7 @@ segundo se conservan para suavizar el inicio y final de cada música.
 2. Graba en el teleprompter y guarda la toma como WAV o FLAC.
 3. Pulsa **Importar voz** o arrastra el archivo sobre la pista de voz.
    Se copia a `media/`; el archivo original no se modifica.
-4. Sitúa el cursor con la barra **POSICIÓN**, la regla superior o la línea dorada,
+4. Sitúa el cursor con la barra **POSICIÓN**, la regla superior o la línea azul,
    que puedes pinchar y arrastrar.
 5. Pulsa **Insertar corte musical aquí… · M**. Se abre el navegador de archivos
    para elegir una canción. Después de cargarla, se divide la voz, se abre el hueco
@@ -64,7 +67,8 @@ segundo se conservan para suavizar el inicio y final de cada música.
    la voz mediante un fundido de **5 segundos**, configurable en **Bajar bajo voz**.
    Son dos tiempos independientes: 5 segundos de música sola y después 5 segundos
    de bajada mientras entra la voz. **Música bajo la voz** ajusta el volumen final.
-   La línea dorada sobre la música muestra la curva que realmente se aplica. El máster
+   La línea dorada sobre la música muestra la curva que realmente se aplica y permite
+   ajustar el volumen con el ratón (ver «Volumen»). El máster
    modifica tanto la reproducción como la exportación. El medidor muestra
    picos de muestra en dBFS, conserva máximos y avisa de saturación.
 7. Guarda el proyecto para continuar otro día y exporta la mezcla final.
@@ -93,7 +97,7 @@ en **Archivos del episodio**. El original permanece intacto.
 
 - **POSICIÓN** permite pinchar en cualquier punto y arrastrar hacia delante o atrás,
   incluso sin ampliar la onda. Si estabas reproduciendo, continúa al soltar.
-- La regla superior y la línea dorada del cursor también se arrastran.
+- La regla superior y la línea azul del cursor también se arrastran.
 - La barra **Vista ampliada** sólo aparece con zoom y desplaza la vista, no el audio.
 - **Cursor** mueve el cabezal sin crear puntos musicales.
 - **Dividir** corta el clip seleccionado en el cursor, sin abrir un hueco.
@@ -106,9 +110,31 @@ en **Archivos del episodio**. El original permanece intacto.
   ese punto y su música. Puedes deshacerlo.
 - Los botones +, − y Ajustar controlan el zoom. Usa la barra horizontal para
   recorrer una grabación larga.
-- **Ganancia clip** modifica sólo el clip seleccionado.
+- **Volumen del clip** modifica sólo el clip seleccionado y actualiza inmediatamente
+  la forma de onda, la curva y el audio, también durante la reproducción.
 - **Tratar voz** crea un WAV corregido con filtro de graves, compresión y/o
   normalización. Conserva el montaje y permite deshacer.
+
+## Volumen
+
+- **Seleccionar voz** y **Seleccionar música** eligen un clip; no suben ni bajan el audio.
+  La selección aparece en la cabecera del editor y en el botón iluminado.
+- Usa el deslizador **Volumen del clip**, el valor en dB o **Alt+↑ / Alt+↓** (1 dB).
+  El botón **0 dB** restaura la ganancia original. −60 dB silencia el clip.
+- Pulsa **Volumen · V** y arrastra la curva amarilla de la música arriba o abajo.
+  El tirador del tramo de música sola cambia el nivel de todo el clip.
+- El tirador al final de la bajada ajusta el fondo: arriba/abajo cambia la atenuación;
+  izquierda/derecha cambia la duración del fundido. La regla superior sigue sirviendo
+  para situar el cursor. En modo Cursor también puedes agarrar la curva, excepto
+  donde coincide con la línea azul, que conserva la función de avance/retroceso.
+- **Fondo · música seleccionada** y **Bajar bajo voz** actúan sobre esa música.
+  La atenuación del fondo se suma a la ganancia del clip: −3 dB de clip y −24 dB
+  de fondo dan −27 dB bajo la voz. Los otros cortes conservan sus ajustes.
+- Sin un clip musical seleccionado, estos dos controles muestran el ajuste general,
+  que heredan los cortes sin un ajuste propio. **Música sola** determina el hueco
+  de los cortes nuevos; no cambia los huecos que ya están creados.
+- Cada arrastre se puede deshacer con un solo **Ctrl+Z**. Los cambios se guardan en
+  el proyecto y se aplican tanto al escuchar como al exportar.
 
 ## Teclado
 
@@ -121,6 +147,8 @@ en **Archivos del episodio**. El original permanece intacto.
 | Retroceder / avanzar 15 s | Mayús+← / → |
 | Ajustar 1 s | Ctrl+← / → |
 | Seleccionar voz / música | ↑ / ↓ |
+| Editar el volumen sobre la música | V |
+| Subir / bajar volumen del clip 1 dB | Alt+↑ / Alt+↓ |
 | Inicio / final | Inicio / Fin |
 | Elegir música e insertar/completar corte en el cursor | M |
 | Colocar música en el punto elegido | Ctrl+Intro |

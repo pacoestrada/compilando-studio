@@ -1,5 +1,17 @@
 # Cambios
 
+## 0.1.3 — 2026-11-10
+
+- Curva musical editable: tirador de volumen y tirador de fondo/fundido.
+- Modo Volumen (V); cursor de posición azul para distinguirlo de la curva amarilla.
+- Deslizador de volumen del clip, valor en dB inmediato, restablecer a 0 dB y Alt+↑/↓.
+- Onda y curva actualizadas al ajustar el volumen, incluso con la reproducción parada.
+- Fondo y duración de bajada independientes por clip musical; sincronizados con el panel.
+- «Seleccionar voz» y «Seleccionar música» indican su función y la selección activa.
+- Se evita que la barra de posición se solape con la música al reducir la ventana.
+- Un solo Deshacer por arrastre. Proyectos anteriores compatibles; guardado con esquema 2.
+- Pruebas de ratón, teclado, selección, deshacer, audio exportado y reapertura de proyectos.
+
 ## 0.1.2 — 2026-11-10
 
 Primera publicación del código y del instalador para GNU/Linux.

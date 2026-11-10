@@ -88,6 +88,33 @@ class AudioTests(unittest.TestCase):
         self.assertEqual(self.p.frames,frames)
         self.assertEqual(len(self.p.cues),1)
 
+    def test_independent_clip_volume_fades_legacy_and_validation(self):
+        m=self.p.add_asset(self.music)
+        first=self.p.insert_music(2*RATE,m,2)
+        second=self.p.insert_music(9*RATE,m,2)
+        second_before=self.p.render(second.start,second.length,track=1)
+        first.gain=-6;first.bed=-12;first.duck_fade=2
+        np.testing.assert_array_equal(second_before,self.p.render(second.start,second.length,track=1))
+        full=float(self.p.render(3*RATE,1,track=1)[0,0])
+        low=float(self.p.render(7*RATE,1,track=1)[0,0])
+        self.assertAlmostEqual(low/full,10**(-12/20),places=6)
+        self.p.save();loaded=Project.load(self.p.file,self.root/'per-clip')
+        np.testing.assert_array_equal(self.p.render(0,self.p.frames),loaded.render(0,loaded.frames))
+        right=self.p.split(first.id,3*RATE)
+        self.assertEqual((right.gain,right.bed,right.duck_fade),(-6,-12,2))
+        payload=json.loads(self.p.file.read_text())
+        payload['clips'][0]['bed']=float('inf')
+        self.p.file.write_text(json.dumps(payload))
+        with self.assertRaisesRegex(ValueError,'fondo'):Project.load(self.p.file,self.root/'invalid')
+        # A real schema-1 payload has none of the per-clip settings.
+        payload['schema']=1
+        for c in payload['clips']:
+            c.pop('bed',None);c.pop('duck_fade',None)
+        self.p.file.write_text(json.dumps(payload))
+        legacy=Project.load(self.p.file,self.root/'legacy-volume')
+        self.assertTrue(all(c.bed is None and c.duck_fade is None for c in legacy.clips))
+        self.assertEqual(legacy.music_bed(legacy.find(first.id)),-24)
+
     def test_insert_music_is_one_undo_step_and_completes_existing_gap(self):
         asset=self.p.add_asset(self.music);before=self.p.state()
         self.p.insert_music(4*RATE,asset)

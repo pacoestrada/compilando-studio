@@ -9,6 +9,7 @@ import numpy as np
 from PyQt5.QtCore import QSettings
 from PyQt5.QtWidgets import QFileDialog, QMessageBox
 from compilando.core import Project, RATE
+from compilando import __version__
 
 
 def smoke(app, Studio, report, close_assets):
@@ -75,5 +76,5 @@ def smoke(app, Studio, report, close_assets):
             for project in projects:
                 close_assets(project)
             app.processEvents()
-    report.write_text(json.dumps({'ok': True, 'version': '0.1.2', 'platform': 'Windows x64', 'checks': ['GUI startup and close', 'WAV import with Unicode paths', 'music insertion and 5-second ducking', 'cursor seek', 'master mute', 'project save and reopen', 'WAV/FLAC/MP3 export and decode', 'publication files', 'original unchanged', 'temporary audio cleanup'], 'physical_audio': 'not tested'}, ensure_ascii=False, indent=2), encoding='utf-8')
+    report.write_text(json.dumps({'ok': True, 'version': __version__, 'platform': 'Windows x64', 'checks': ['GUI startup and close', 'WAV import with Unicode paths', 'music insertion and 5-second ducking', 'cursor seek', 'master mute', 'project save and reopen', 'WAV/FLAC/MP3 export and decode', 'publication files', 'original unchanged', 'temporary audio cleanup'], 'physical_audio': 'not tested'}, ensure_ascii=False, indent=2), encoding='utf-8')
     return 0

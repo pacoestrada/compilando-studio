@@ -4,7 +4,7 @@ import numpy as np
 from PyQt5.QtCore import Qt, QRectF, QPointF, pyqtSignal, QMimeData, QUrl
 from PyQt5.QtGui import QColor, QPainter, QPen, QLinearGradient, QFont, QDrag, QPolygonF
 from PyQt5.QtWidgets import QWidget, QListWidget, QAbstractItemView, QSlider, QStyle, QStyleOptionSlider
-from .core import RATE, FORMATS
+from .core import RATE, FORMATS, db
 
 def clock(frame):
     seconds = max(0, frame) / RATE
@@ -120,6 +120,7 @@ class Timeline(QWidget):
     cueRequested = pyqtSignal(int)
     scrubStarted = pyqtSignal()
     scrubFinished = pyqtSignal()
+    volumeChanged = pyqtSignal()
 
     def __init__(self, project, parent=None):
         super().__init__(parent)
@@ -132,7 +133,8 @@ class Timeline(QWidget):
         self.view = 0
         self.drag = None
         self.scrubbing = False
-        self.setMinimumSize(400, 270)
+        self.volume_drag = None
+        self.setMinimumSize(400, 250)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setAcceptDrops(True)
         self.setMouseTracking(True)
@@ -154,6 +156,76 @@ class Timeline(QWidget):
 
     def hit(self, point):
         return next((c for c in reversed(self.project.clips) if self.rect_for(c).contains(point)), None)
+
+    def volume_y(self, clip, gain_db):
+        r = self.rect_for(clip)
+        return r.bottom()-7 - (max(-60, min(24, gain_db))+60)/84 * 52
+
+    def volume_db(self, clip, y):
+        return max(-60, min(24, round(((self.rect_for(clip).bottom()-7-y)/52*84-60)*2)/2))
+
+    def voice_return(self, clip):
+        return next((start for start, end in self.project.voice_regions()
+                     if end > clip.start and start < clip.end), None)
+
+    def volume_handles(self, clip):
+        """Handles edit the parameters actually used by the mixer, never a copy."""
+        if clip.track != 1:
+            return []
+        start = self.voice_return(clip)
+        solo_end = min(clip.end, start) if start is not None else clip.end
+        handles = []
+        fade = min(max(1, round(self.project.fade*RATE)), clip.length//2)
+        if solo_end > clip.start+fade:
+            t = min(clip.start+fade+RATE, (clip.start+fade+solo_end)//2)
+            handles.append(('gain', QPointF(self.x(t), self.volume_y(clip, clip.gain))))
+        if start is not None:
+            t = start + round(self.project.music_duck_fade(clip)*RATE)
+            if clip.start <= t < clip.end-fade:
+                handles.append(('bed', QPointF(self.x(t), self.volume_y(clip, clip.gain+self.project.music_bed(clip)))))
+        return handles
+
+    def volume_hit(self, point):
+        c = self.hit(point)
+        if not c or c.track != 1 or point.y() < self.rect_for(c).top()+25:
+            return None
+        for kind, handle in self.volume_handles(c):
+            if abs(point.x()-handle.x()) <= 9 and abs(point.y()-handle.y()) <= 9:
+                return c, kind, True
+        frame = min(c.end-1, max(c.start, self.frame(point.x())))
+        gain = float(self.project.music_envelope(c, [frame])[0])
+        curve_y = self.volume_y(c, c.gain+20*math.log10(max(gain, 1e-9)))
+        if self.mode == 'volume' or abs(point.y()-curve_y) <= 6:
+            start = self.voice_return(c)
+            kind = 'bed' if start is not None and frame >= start+RATE*self.project.music_duck_fade(c)/2 else 'gain'
+            return c, kind, False
+        return None
+
+    def drag_volume(self, point):
+        d = self.volume_drag
+        c = self.project.find(d['id'])
+        if c is None:
+            return
+        dy, dx = point.y()-d['y'], point.x()-d['x']
+        if not d['moved'] and abs(dy) < 2 and abs(dx) < 3:
+            return
+        value = max(-60, min(24 if d['kind']=='gain' else 0, round((d['value']-dy*84/52)*2)/2))
+        duration = d['duration']
+        if d['kind']=='bed' and d['handle'] and abs(dx) >= 3:
+            duration = max(.1, min(30, round((d['duration']+dx/(self.width()-28)*self.span/RATE)*10)/10))
+        if not d['moved']:
+            if value == d['value'] and duration == d['duration']:
+                return
+            self.project.remember()
+            d['moved'] = True
+        if d['kind'] == 'gain':
+            c.gain = value
+        else:
+            c.bed = value
+            c.duck_fade = duration if duration != d['duration'] or d['duration_override'] is not None else None
+        self.project.dirty = True
+        self.volumeChanged.emit()
+        self.update()
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -194,7 +266,7 @@ class Timeline(QWidget):
             p.save()
             p.setClipRect(r.adjusted(2, 1, -2, -1))
             p.setPen(QColor('#ede9d7'))
-            title_width=r.width()-12-(170 if c.track==1 and r.width()>220 else 0)
+            title_width=r.width()-12-(210 if r.width()>300 else 0)
             p.drawText(QRectF(r.x()+6,r.y()+2,title_width,20), Qt.AlignLeft|Qt.AlignVCenter, asset.path.name.split('_',1)[-1])
             p.setPen(QPen(QColor('#8fd0ed' if c.track == 0 else '#d0bbea'), 1))
             center = r.y()+57
@@ -204,19 +276,26 @@ class Timeline(QWidget):
             for x, frame, gain in zip(pixels, frames, envelope):
                 index = int((c.offset + frame - c.start) / 512)
                 if 0 <= index < len(asset.peaks):
-                    amp = min(1, float(asset.peaks[index]) * 10**(c.gain/20)*gain)*24
+                    amp = min(1, float(asset.peaks[index]) * db(c.gain)*gain)*24
                     p.drawLine(QPointF(x,center-amp),QPointF(x,center+amp))
             if c.track == 1 and len(pixels)>1:
                 p.setPen(QPen(QColor('#f2d179'), 2))
-                p.drawPolyline(QPolygonF([QPointF(x,r.bottom()-8-float(gain)*46) for x,gain in zip(pixels,envelope)]))
-                if r.width()>220:
+                p.drawPolyline(QPolygonF([QPointF(x,self.volume_y(c,c.gain+20*math.log10(max(float(gain),1e-9)))) for x,gain in zip(pixels,envelope)]))
+                if c.id == self.selected_id or self.mode == 'volume':
+                    for kind, point in self.volume_handles(c):
+                        p.setPen(QPen(QColor('#ffe6a0'), 2));p.setBrush(QColor('#293338'))
+                        p.drawEllipse(point, 5, 5)
+                if r.width()>300:
                     p.setPen(QColor('#f2d179'))
-                    p.drawText(QRectF(r.right()-170,r.y()+2,162,20), Qt.AlignRight|Qt.AlignVCenter, f'Bajada bajo voz · {self.project.duck_fade:g} s')
+                    p.drawText(QRectF(r.right()-210,r.y()+2,202,20), Qt.AlignRight|Qt.AlignVCenter, f'{c.gain:+g} dB · Fondo {self.project.music_bed(c):g} · {self.project.music_duck_fade(c):g} s')
+            elif r.width()>300:
+                p.setPen(QColor('#c6e5ed'))
+                p.drawText(QRectF(r.right()-110,r.y()+2,102,20),Qt.AlignRight|Qt.AlignVCenter,f'{c.gain:+g} dB')
             p.restore()
         x = self.x(self.cursor)
-        p.setPen(QPen(QColor('#f6db84'), 2))
+        p.setPen(QPen(QColor('#81dae7'), 2))
         p.drawLine(QPointF(x, 26), QPointF(x, 248))
-        p.setBrush(QColor('#f6db84'))
+        p.setBrush(QColor('#81dae7'))
         p.drawPolygon(QPolygonF([QPointF(x-7,22),QPointF(x+7,22),QPointF(x,31)]))
         if not self.project.clips:
             p.setPen(QColor('#c5cbbd'))
@@ -229,6 +308,15 @@ class Timeline(QWidget):
         # The ruler and the playhead always seek, even in clip/marker modes.
         line_hit = abs(event.x()-self.x(self.cursor)) <= 7
         c = self.hit(event.localPos())
+        volume = self.volume_hit(event.localPos()) if self.mode in ('cursor','volume') else None
+        if volume and event.y()>=31 and (self.mode=='volume' or not line_hit):
+            c, kind, handle = volume
+            self.selected_id=c.id;self.track=1;self.selected.emit(c.id)
+            self.volume_drag={'id':c.id,'kind':kind,'handle':handle,'x':event.x(),'y':event.y(),
+                'value':c.gain if kind=='gain' else self.project.music_bed(c),
+                'duration':self.project.music_duck_fade(c),'duration_override':c.duck_fade,'moved':False}
+            self.setCursor(Qt.SizeAllCursor if kind=='bed' and handle else Qt.SizeVerCursor)
+            self.update();return
         waveform_seek = self.mode=='cursor' and (not c or event.y()>=self.rect_for(c).top()+24)
         if event.y()<31 or line_hit or waveform_seek:
             if event.y()>=31 and not line_hit:
@@ -254,7 +342,9 @@ class Timeline(QWidget):
         self.update()
 
     def mouseMoveEvent(self, event):
-        if self.scrubbing:
+        if self.volume_drag:
+            self.drag_volume(event.localPos())
+        elif self.scrubbing:
             self.cursor=min(self.project.frames,self.frame(event.x()));self.seeked.emit(self.cursor);self.update()
         elif self.drag:
             if not self.drag['moved'] and abs(event.x()-self.drag['x']) < 3:
@@ -266,6 +356,13 @@ class Timeline(QWidget):
             self.update()
         else:
             c = self.hit(event.localPos())
+            volume = self.volume_hit(event.localPos()) if self.mode in ('cursor','volume') else None
+            if volume and (self.mode=='volume' or abs(event.x()-self.x(self.cursor))>7):
+                _, kind, handle = volume
+                self.setCursor(Qt.SizeAllCursor if kind=='bed' and handle else Qt.SizeVerCursor)
+                self.setToolTip('Arrastra arriba/abajo: volumen del clip.' if kind=='gain' else
+                    'Arrastra arriba/abajo: música bajo la voz. Arrastra el tirador lateralmente: duración de la bajada.')
+                return
             if event.y()<31 or abs(event.x()-self.x(self.cursor))<=7:
                 self.setCursor(Qt.SizeHorCursor);self.setToolTip('Arrastra el cursor para avanzar o retroceder.')
             else:
@@ -274,6 +371,10 @@ class Timeline(QWidget):
                 self.setToolTip(f'{self.project.assets[c.asset].path.name}\n{clock(c.start)} — {clock(c.end)} · arrastra la cabecera')
 
     def mouseReleaseEvent(self, event):
+        if self.volume_drag:
+            self.drag_volume(event.localPos());moved=self.volume_drag['moved'];self.volume_drag=None
+            if moved:self.changed.emit()
+            self.update();return
         if self.scrubbing:
             self.cursor=min(self.project.frames,self.frame(event.x()));self.seeked.emit(self.cursor);self.scrubbing=False;self.scrubFinished.emit();self.update();return
         if self.drag and self.drag['moved']:

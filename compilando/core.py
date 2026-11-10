@@ -48,6 +48,8 @@ class Clip:
     length: int
     gain: float = 0.0
     cue: str = ''
+    bed: float | None = None
+    duck_fade: float | None = None
 
     @property
     def end(self):
@@ -167,7 +169,8 @@ class Project:
         if remember:
             self.remember()
         amount = position - c.start
-        right = Clip(uid(), c.asset, c.track, position, c.offset + amount, c.length - amount, c.gain, '')
+        right = Clip(uid(), c.asset, c.track, position, c.offset + amount, c.length - amount,
+                     c.gain, '', c.bed, c.duck_fade)
         c.length = amount
         self.clips.append(right)
         return right
@@ -256,7 +259,7 @@ class Project:
         if not len(times):
             return np.zeros(0, dtype=np.float32)
         duck = np.zeros(len(times), dtype=np.float32)
-        attack_frames = max(1, int(self.duck_fade * RATE))
+        attack_frames = max(1, int(self.music_duck_fade(clip) * RATE))
         release_frames = max(1, int(self.fade * RATE))
         for start, end in self.voice_regions() if regions is None else regions:
             # A fresh music insert must not inherit the preceding voice's release.
@@ -268,7 +271,13 @@ class Project:
             duck = np.maximum(duck, np.where(times < end, attack, release))
         edge = min(release_frames, max(1, clip.length // 2))
         edges = np.minimum(np.clip((times-clip.start) / edge, 0, 1), np.clip((clip.end-times) / edge, 0, 1))
-        return ((1-(1-db(self.bed))*duck)*edges).astype(np.float32)
+        return ((1-(1-db(self.music_bed(clip)))*duck)*edges).astype(np.float32)
+
+    def music_bed(self, clip):
+        return self.bed if clip.bed is None else clip.bed
+
+    def music_duck_fade(self, clip):
+        return self.duck_fade if clip.duck_fade is None else clip.duck_fade
 
     def render(self, start, count, track=None, master=True):
         output = np.zeros((count, 2), dtype=np.float32)
@@ -303,7 +312,7 @@ class Project:
         if cover:
             payload['metadata']['cover'] = os.path.relpath(cover, path.parent)
         # Retain imported sources for replacement and recovery.
-        payload.update(schema=1, sample_rate=RATE, assets={k: os.path.relpath(a.path, path.parent) for k, a in self.assets.items()})
+        payload.update(schema=2, sample_rate=RATE, assets={k: os.path.relpath(a.path, path.parent) for k, a in self.assets.items()})
         atomic_json(path, payload)
         if not autosave:
             self.file = path
@@ -314,7 +323,7 @@ class Project:
     def load(cls, filename, cache=None):
         path = Path(filename).resolve()
         data = json.loads(path.read_text(encoding='utf-8'))
-        if data.get('schema') != 1 or data.get('sample_rate') != RATE:
+        if data.get('schema') not in (1, 2) or data.get('sample_rate') != RATE:
             raise ValueError('Versión de proyecto no compatible.')
         project = cls(path.parent, cache)
         for id, rel in data['assets'].items():
@@ -334,6 +343,11 @@ class Project:
             raise ValueError('El proyecto contiene un volumen no válido.')
         if not 0 <= project.duck_fade <= 30:
             raise ValueError('La duración del fundido no es válida.')
+        for c in project.clips:
+            if c.bed is not None and (not math.isfinite(c.bed) or not -60 <= c.bed <= 0):
+                raise ValueError('El volumen de fondo de un clip no es válido.')
+            if c.duck_fade is not None and (not math.isfinite(c.duck_fade) or not .1 <= c.duck_fade <= 30):
+                raise ValueError('La duración del fundido de un clip no es válida.')
         project.file, project.dirty = path, False
         return project
 

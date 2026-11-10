@@ -1,5 +1,5 @@
 Name:           compilando-studio
-Version:        0.1.2
+Version:        0.1.3
 Release:        1
 Summary:        Editor de podcast Compilando Studio
 License:        GPL-3.0-or-later
@@ -59,5 +59,7 @@ DESKTOP
 /usr/share/compilando-studio
 
 %changelog
+* Tue Nov 10 2026 Compilando Podcast - 0.1.3-1
+- Curva de volumen editable y ajustes por clip.
 * Tue Nov 10 2026 Compilando Podcast - 0.1.2-1
 - Primer paquete RPM; mismo codigo de aplicacion que la etiqueta v0.1.2.

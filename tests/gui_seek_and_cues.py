@@ -78,8 +78,8 @@ with tempfile.TemporaryDirectory() as tmp:
     QTest.mousePress(s,Qt.LeftButton,pos=QPoint(int(s.width()*.25),h));assert not w.playing
     QTest.mouseRelease(s,Qt.LeftButton,pos=QPoint(int(s.width()*.3),h));assert w.playing and len(calls)==1
     w.playing=False;w.play=real_play
-    w.duck_fade.setValue(3);w.duck_fade.editingFinished.emit();assert w.project.duck_fade==3
-    w.undo();assert w.project.duck_fade==5
+    w.duck_fade.setValue(3);assert w.project.music_duck_fade(w.music_target())==3
+    w.undo();assert w.project.music_duck_fade(w.music_target())==5
     w.zoom(0);w.seek(10*RATE);w.mode('cursor')
     w.music_folder=folder;w.refresh_music();app.processEvents()
     w.grab().save('/tmp/compilando-studio-011.png')

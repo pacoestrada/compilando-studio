@@ -126,27 +126,41 @@ class Studio(QMainWindow):
         imp = QHBoxLayout();imp.addWidget(self.button('Importar voz · Ctrl+O',self.import_voice,'blue'))
         self.voice_info = QLabel('WAV / FLAC del teleprompter · arrastra sobre la pista de voz');self.voice_info.setObjectName('muted');self.voice_info.setWordWrap(True);imp.addWidget(self.voice_info,1);lv.addLayout(imp)
         editor = self.panel();ev = QVBoxLayout(editor);ev.setContentsMargins(9,8,9,8);ev.setSpacing(7);lv.addWidget(editor,1)
-        top = QHBoxLayout();top.addWidget(QLabel('EDICIÓN  ·  VOZ Y MÚSICA'));top.addStretch();top.addWidget(self.button('Tratar voz',self.effects));top.addWidget(self.button('Plugins en Audacity',self.open_audacity));ev.addLayout(top)
+        top = QHBoxLayout();self.selection=QLabel('Sin clip seleccionado');top.addWidget(self.selection,1);top.addWidget(self.button('Tratar voz',self.effects));top.addWidget(self.button('Plugins en Audacity',self.open_audacity));ev.addLayout(top)
         transport = QHBoxLayout()
         for text, fn, col in [('Inicio',lambda:self.seek(0),None),('◀  −5 s',lambda:self.seek(self.timeline.cursor-5*RATE),None),('▶  Play',self.play,'green'),('Ⅱ  Pausa',self.pause,None),('■  Stop',self.stop,'red'),('+5 s  ▶',lambda:self.seek(self.timeline.cursor+5*RATE),None),('Final',lambda:self.seek(self.project.frames),None)]:
             transport.addWidget(self.button(text,fn,col))
         self.time_label = QLabel('00:00.0');self.time_label.setObjectName('display');transport.addWidget(self.time_label);ev.addLayout(transport)
         modes = QHBoxLayout();self.mode_buttons={}
-        for mode,label in [('cursor','Cursor'),('clip','Mover clip'),('track','Mover pista')]:
+        for mode,label in [('cursor','Cursor'),('volume','Volumen · V'),('clip','Mover clip'),('track','Mover pista')]:
             b=self.button(label,lambda m=mode:self.mode(m),check=True);self.mode_buttons[mode]=b;modes.addWidget(b)
         modes.addWidget(self.button('Dividir · Ctrl+I',self.split));modes.addWidget(self.button('Borrar',self.delete));modes.addWidget(self.button('↶',lambda:self.undo(False)));modes.addWidget(self.button('↷',lambda:self.undo(True)));modes.addStretch()
         modes.addWidget(self.button('−',lambda:self.zoom(.7)));modes.addWidget(self.button('Ajustar',lambda:self.zoom(0)));modes.addWidget(self.button('+',lambda:self.zoom(1.4)));ev.addLayout(modes)
         self.timeline = Timeline(self.project);self.timeline.editStarted.connect(self.pause);self.timeline.seeked.connect(self.seek);self.timeline.selected.connect(self.select_clip);self.timeline.changed.connect(self.refresh);self.timeline.cueRequested.connect(lambda pos:self.guard(lambda:self.add_cue(pos)));self.timeline.dropped.connect(self.drop_audio);ev.addWidget(self.timeline,1)
         self.timeline.scrubStarted.connect(self.begin_scrub);self.timeline.scrubFinished.connect(self.end_scrub)
+        self.timeline.volumeChanged.connect(self.volume_feedback)
         seekrow=QHBoxLayout();seekrow.addWidget(QLabel('POSICIÓN'))
         self.position=PositionSlider();self.position.seekRequested.connect(self.seek);self.position.scrubStarted.connect(self.begin_scrub);self.position.scrubFinished.connect(self.end_scrub);seekrow.addWidget(self.position,1)
         self.position_info=QLabel('00:00.0 / 00:00.0');self.position_info.setObjectName('muted');seekrow.addWidget(self.position_info);ev.addLayout(seekrow)
         self.view_row=QWidget();viewlayout=QHBoxLayout(self.view_row);viewlayout.setContentsMargins(0,0,0,0);viewlabel=QLabel('Vista ampliada');viewlabel.setObjectName('muted');viewlayout.addWidget(viewlabel)
         self.scroll = QScrollBar(Qt.Horizontal);self.scroll.valueChanged.connect(self.scroll_view);viewlayout.addWidget(self.scroll,1);ev.addWidget(self.view_row)
-        properties = QHBoxLayout();self.selection = QLabel('Sin clip seleccionado');properties.addWidget(self.selection,1)
-        properties.addWidget(QLabel('Ganancia clip'))
-        self.clip_gain = QDoubleSpinBox();self.clip_gain.setRange(-60,24);self.clip_gain.setSuffix(' dB');self.clip_gain.setSingleStep(.5);self.clip_gain.editingFinished.connect(self.change_clip_gain);properties.addWidget(self.clip_gain)
-        properties.addWidget(self.button('↑ Voz',lambda:self.select_track(0)));properties.addWidget(self.button('↓ Música',lambda:self.select_track(1)));ev.addLayout(properties)
+        self.track_buttons={}
+        for track,label in [(0,'Seleccionar voz'),(1,'Seleccionar música')]:
+            b=self.button(label,lambda t=track:self.select_track(t),check=True)
+            b.setToolTip('Selecciona el clip de esta pista situado bajo el cursor. No cambia su volumen.')
+            self.track_buttons[track]=b
+        volume=QHBoxLayout();volume.addWidget(QLabel('Volumen del clip'))
+        self.clip_gain_slider=QSlider(Qt.Horizontal);self.clip_gain_slider.setRange(-600,240)
+        self.clip_gain_slider.setToolTip('Volumen del clip seleccionado. Cambia la onda y el audio al moverlo.')
+        self.clip_gain_slider.sliderPressed.connect(self.begin_volume)
+        self.clip_gain_slider.valueChanged.connect(lambda value:self.change_clip_gain(value/10));volume.addWidget(self.clip_gain_slider,1)
+        self.clip_gain=QDoubleSpinBox();self.clip_gain.setRange(-60,24);self.clip_gain.setSuffix(' dB');self.clip_gain.setSingleStep(.5)
+        self.clip_gain.setKeyboardTracking(False);self.clip_gain.valueChanged.connect(self.change_clip_gain);volume.addWidget(self.clip_gain)
+        self.reset_clip_gain=self.button('0 dB',lambda:self.change_clip_gain(0));volume.addWidget(self.reset_clip_gain)
+        for b in self.track_buttons.values():volume.addWidget(b)
+        ev.addLayout(volume)
+        self.volume_help=QLabel('Curva amarilla: volumen. Cursor azul: posición. Volumen · V para editar sobre la música.')
+        self.volume_help.setObjectName('muted');self.volume_help.setWordWrap(True);ev.addWidget(self.volume_help)
         cues = QHBoxLayout();self.insert_cue_button=self.button('Insertar corte musical aquí… · M',self.add_cue,'amber');self.insert_cue_button.setToolTip('Abre el selector de música. Al elegir un archivo se crea el corte y su fundido. Dentro de un hueco existente, completa ese corte.');cues.addWidget(self.insert_cue_button)
         self.cues = QComboBox();self.cues.currentIndexChanged.connect(self.select_cue);cues.addWidget(self.cues,1)
         self.cue_state = QLabel('Sin puntos');cues.addWidget(self.cue_state);lv.addLayout(cues)
@@ -159,9 +173,9 @@ class Studio(QMainWindow):
         self.music_list=MusicList();self.music_list.currentItemChanged.connect(self.choose_music_item);self.music_list.itemDoubleClicked.connect(self.music_double);music.addWidget(self.music_list,1)
         self.mark=self.button('Elegir corte con clic',lambda:self.mode('mark'),'amber',True);music.addWidget(self.mark)
         gapline=QHBoxLayout();gapline.addWidget(QLabel('Música sola'));self.gap=QDoubleSpinBox();self.gap.setRange(.1,30);self.gap.setValue(5);self.gap.setSuffix(' s');self.gap.setToolTip('Hueco de voz que abre cada nuevo corte musical.');gapline.addWidget(self.gap);music.addLayout(gapline)
-        duckline=QHBoxLayout();duckline.addWidget(QLabel('Bajar bajo voz'));self.duck_fade=QDoubleSpinBox();self.duck_fade.setRange(.1,30);self.duck_fade.setValue(5);self.duck_fade.setSuffix(' s');self.duck_fade.setToolTip('Duración de la bajada al entrar la voz. Se aplica a todas las músicas.');self.duck_fade.editingFinished.connect(self.change_duck_fade);duckline.addWidget(self.duck_fade);music.addLayout(duckline)
+        duckline=QHBoxLayout();duckline.addWidget(QLabel('Bajar bajo voz'));self.duck_fade=QDoubleSpinBox();self.duck_fade.setRange(.1,30);self.duck_fade.setValue(5);self.duck_fade.setSuffix(' s');self.duck_fade.setToolTip('Duración de la bajada del clip musical seleccionado. Sin música seleccionada, ajusta el valor general.');self.duck_fade.setKeyboardTracking(False);self.duck_fade.valueChanged.connect(self.change_duck_fade);duckline.addWidget(self.duck_fade);music.addLayout(duckline)
         self.assign_button=self.button('Colocar música',self.assign_music,'blue');music.addWidget(self.assign_button)
-        music.addWidget(QLabel('Música bajo la voz'))
+        self.bed_scope=QLabel('Fondo · ajuste general');self.bed_scope.setWordWrap(True);music.addWidget(self.bed_scope)
         self.bed=QSlider(Qt.Horizontal);self.bed.setRange(-600,0);self.bed.setValue(-240);self.bed.sliderPressed.connect(self.begin_volume);self.bed.valueChanged.connect(self.change_bed);music.addWidget(self.bed)
         self.bed_label=QLabel('−24.0 dB');music.addWidget(self.bed_label)
         self.fade=QCheckBox('Suavizar inicio/final · 1 s');self.fade.setChecked(True);self.fade.toggled.connect(self.change_fade);music.addWidget(self.fade)
@@ -179,6 +193,12 @@ class Studio(QMainWindow):
         self.file_model=QFileSystemModel(self);self.file_model.setFilter(QDir.AllEntries|QDir.NoDotAndDotDot)
         self.files=QTreeView();self.files.setModel(self.file_model);self.files.setDragEnabled(True);self.files.setAlternatingRowColors(True);self.files.setSelectionMode(QAbstractItemView.SingleSelection);self.files.doubleClicked.connect(self.open_episode_item);self.files.setMinimumHeight(85);self.files.setRootIsDecorated(True);self.files.setColumnWidth(0,480);dv.addWidget(self.files)
         vertical.setSizes([640,190]);vertical.setStretchFactor(0,1)
+        vertical.setChildrenCollapsible(False);workspace.setChildrenCollapsible(False)
+        # Honour the layouts' actual minimums: otherwise Qt overlaps the seek
+        # bar and music when a splitter allocates less than the editor needs.
+        left.setMinimumHeight(left.minimumSizeHint().height())
+        workspace.setMinimumHeight(workspace.minimumSizeHint().height())
+        self.setMinimumSize(self.minimumSizeHint())
         self.mode('cursor')
 
     def build_menu(self):
@@ -218,12 +238,10 @@ class Studio(QMainWindow):
         self.cues.setCurrentIndex(idx if idx>=0 else (0 if self.cues.count() else -1));self.cues.blockSignals(False)
         self.cue_id=self.cues.currentData() or ''
         self.update_assignment()
-        for widget,value in [(self.master,round(self.project.master*10)),(self.bed,round(self.project.bed*10))]:
+        for widget,value in [(self.master,round(self.project.master*10))]:
             widget.blockSignals(True);widget.setValue(value);widget.blockSignals(False)
         self.fade.blockSignals(True);self.fade.setChecked(self.project.fade>=.9);self.fade.blockSignals(False)
-        self.duck_fade.blockSignals(True);self.duck_fade.setValue(self.project.duck_fade);self.duck_fade.blockSignals(False)
         self.master_label.setText('−∞ dB' if self.project.master<=-60 else f'{self.project.master:+.1f} dB')
-        self.bed_label.setText(f'{self.project.bed:.1f} dB')
         self.scroll.blockSignals(True);self.scroll.setRange(0,max(0,int(max(RATE*10,self.project.frames*1.08))-self.timeline.span));self.scroll.setPageStep(self.timeline.span);self.scroll.setValue(self.timeline.view);self.timeline.view=self.scroll.value();self.scroll.blockSignals(False);self.view_row.setVisible(self.scroll.maximum()>0)
         self.file_model.setRootPath(str(self.project.folder));self.files.setRootIndex(self.file_model.index(str(self.project.folder)))
         voice=next((c for c in self.project.clips if c.track==0),None)
@@ -250,8 +268,11 @@ class Studio(QMainWindow):
 
     def select_clip(self, id, choose_cue=True):
         c=self.project.find(id);self.timeline.selected_id=id if c else ''
-        self.clip_gain.blockSignals(True);self.clip_gain.setEnabled(bool(c));self.clip_gain.setValue(c.gain if c else 0);self.clip_gain.blockSignals(False)
-        self.selection.setText(('Voz' if c.track==0 else 'Música')+' · '+clock(c.length) if c else 'Sin clip seleccionado')
+        self.sync_volume_controls()
+        name=self.project.assets[c.asset].path.name.split('_',1)[-1] if c else ''
+        self.selection.setText((('Voz' if c.track==0 else 'Música')+' · '+name[:38]+('…' if len(name)>38 else '')+' · '+clock(c.length)) if c else 'Sin clip seleccionado')
+        self.selection.setToolTip(name)
+        for track,button in self.track_buttons.items():button.setChecked(bool(c and c.track==track))
         if c:
             self.timeline.track=c.track
             if choose_cue and c.cue:
@@ -265,6 +286,8 @@ class Studio(QMainWindow):
 
     def select_cue(self, index):
         self.cue_id=self.cues.currentData() or '';self.update_assignment()
+        c=next((c for c in self.project.clips if c.cue==self.cue_id and self.cue_id),None)
+        if c:self.select_clip(c.id,False)
 
     def import_voice(self, filename=None):
         if filename is None:
@@ -350,24 +373,55 @@ class Studio(QMainWindow):
     def begin_volume(self):
         self.project.remember()
 
+    def music_target(self):
+        c=self.project.find(self.timeline.selected_id)
+        return c if c and c.track==1 else None
+
+    def sync_volume_controls(self):
+        c=self.project.find(self.timeline.selected_id)
+        music=self.music_target()
+        for widget,value in [(self.clip_gain,c.gain if c else 0),(self.clip_gain_slider,round(c.gain*10) if c else 0),
+                             (self.bed,round((self.project.music_bed(music) if music else self.project.bed)*10)),
+                             (self.duck_fade,self.project.music_duck_fade(music) if music else self.project.duck_fade)]:
+            widget.blockSignals(True);widget.setValue(value);widget.blockSignals(False)
+        for widget in (self.clip_gain,self.clip_gain_slider,self.reset_clip_gain):widget.setEnabled(bool(c))
+        self.bed_scope.setText('Fondo · música seleccionada' if music else 'Fondo · ajuste general')
+        level=self.project.music_bed(music) if music else self.project.bed
+        self.bed_label.setText(('Silencio' if level<=-60 else f'{level:.1f} dB respecto al clip'))
+
+    def volume_feedback(self):
+        self.sync_volume_controls();self.timeline.update()
+        self.setWindowTitle(('● ' if self.project.dirty else '')+'Compilando Studio · Radio Edition '+__version__)
+
     def change_master(self, value):
         if not self.master.isSliderDown():self.project.remember()
         self.project.master=value/10;self.project.dirty=True;self.master_label.setText('−∞ dB' if value<=-600 else f'{value/10:+.1f} dB')
 
     def change_bed(self, value):
+        c=self.music_target()
+        if value/10==(self.project.music_bed(c) if c else self.project.bed):return
         if not self.bed.isSliderDown():self.project.remember()
-        self.project.bed=value/10;self.project.dirty=True;self.bed_label.setText(f'{value/10:.1f} dB')
+        if c:c.bed=value/10
+        else:self.project.bed=value/10
+        self.project.dirty=True;self.volume_feedback()
 
     def change_fade(self, checked):
         self.project.remember();self.project.fade=1 if checked else .01;self.refresh()
 
-    def change_duck_fade(self):
-        if self.project.duck_fade!=self.duck_fade.value():
-            self.pause();self.project.remember();self.project.duck_fade=self.duck_fade.value();self.refresh()
+    def change_duck_fade(self, value=None):
+        value=self.duck_fade.value() if value is None else value;c=self.music_target()
+        if value!=(self.project.music_duck_fade(c) if c else self.project.duck_fade):
+            self.project.remember()
+            if c:c.duck_fade=value
+            else:self.project.duck_fade=value
+            self.volume_feedback()
 
-    def change_clip_gain(self):
+    def change_clip_gain(self, value=None):
+        value=self.clip_gain.value() if value is None else value
         c=self.project.find(self.timeline.selected_id)
-        if c and c.gain!=self.clip_gain.value():self.pause();self.project.remember();c.gain=self.clip_gain.value();self.refresh()
+        if c and c.gain!=value:
+            if not self.clip_gain_slider.isSliderDown():self.project.remember()
+            c.gain=value;self.project.dirty=True;self.volume_feedback()
 
     def seek(self, frame):
         resume=self.playing
@@ -579,23 +633,27 @@ class Studio(QMainWindow):
 
     def help(self):
         QMessageBox.information(self,'Compilando Studio '+__version__,
-            'Ctrl+O · importar voz\nCtrl+S · exportar audio\nCtrl+Mayús+S · guardar proyecto\nCtrl+Mayús+O · abrir proyecto\nEspacio · Play/Pausa\nS · Stop\n← / → · 5 s; Mayús · 15 s; Ctrl · 1 s\n↑ / ↓ · voz / música\nInicio / Fin · principio / final\nM · elegir música e insertar/completar corte en el cursor\nCtrl+Intro · colocar música\nCtrl+I · dividir clip\nSupr · borrar clip (deja hueco)\n, / . · mover 0,5 s; Mayús · 5 s\nCtrl+Z / Ctrl+Mayús+Z · deshacer / rehacer\n\nInsertar corte musical abre el selector de archivos. Si cancelas, no se cambia la voz. Dentro de un hueco existente se completa ese corte, sin crear otro. Ctrl+Z deshace el corte nuevo y su música juntos. Pincha o arrastra POSICIÓN, la regla o la línea dorada para avanzar y retroceder. Música sola y Bajar bajo voz son dos tiempos independientes (5 s cada uno por defecto). Arrastra la cabecera para mover un clip. «Mover pista» desplaza toda la pista. Los originales no se alteran. Guarda y mueve siempre el proyecto junto a su carpeta media. La subida a plataformas es manual.')
+            'Ctrl+O · importar voz\nCtrl+S · exportar audio\nCtrl+Mayús+S · guardar proyecto\nCtrl+Mayús+O · abrir proyecto\nEspacio · Play/Pausa\nS · Stop\n← / → · 5 s; Mayús · 15 s; Ctrl · 1 s\n↑ / ↓ · seleccionar voz / música\nV · editar volumen sobre la música\nAlt+↑ / Alt+↓ · volumen del clip ±1 dB\nInicio / Fin · principio / final\nM · elegir música e insertar/completar corte en el cursor\nCtrl+Intro · colocar música\nCtrl+I · dividir clip\nSupr · borrar clip (deja hueco)\n, / . · mover 0,5 s; Mayús · 5 s\nCtrl+Z / Ctrl+Mayús+Z · deshacer / rehacer\n\nInsertar corte musical abre el selector de archivos. Si cancelas, no se cambia la voz. Dentro de un hueco existente se completa ese corte, sin crear otro. Ctrl+Z deshace el corte nuevo y su música juntos. Pincha o arrastra POSICIÓN, la regla o la línea azul para avanzar y retroceder. La curva amarilla controla el volumen: arrastra sus tiradores arriba/abajo. El tirador de fondo también se mueve izquierda/derecha para ajustar el fundido. El fondo y la bajada del panel actúan sobre el clip musical seleccionado. Los botones Seleccionar voz/música no cambian el volumen. Música sola y Bajar bajo voz son dos tiempos independientes (5 s cada uno por defecto). Arrastra la cabecera para mover un clip. «Mover pista» desplaza toda la pista. Los originales no se alteran. Guarda y mueve siempre el proyecto junto a su carpeta media. La subida a plataformas es manual.')
 
     def dispatch_key(self,event):
         if self.busy:return False
         focus=QApplication.focusWidget()
         if isinstance(focus,(QLineEdit,QPlainTextEdit,QDoubleSpinBox,QSpinBox,QComboBox)):
             return False
-        key=event.key();ctrl=bool(event.modifiers()&Qt.ControlModifier);shift=bool(event.modifiers()&Qt.ShiftModifier)
+        key=event.key();ctrl=bool(event.modifiers()&Qt.ControlModifier);shift=bool(event.modifiers()&Qt.ShiftModifier);alt=bool(event.modifiers()&Qt.AltModifier)
         action=None
         if key in (Qt.Key_Left,Qt.Key_Right):action=lambda:self.seek(self.timeline.cursor+(1 if key==Qt.Key_Right else -1)*(1 if ctrl else 15 if shift else 5)*RATE)
         elif key==Qt.Key_Space:action=self.pause if self.playing else self.play
         elif key==Qt.Key_S and not ctrl:action=self.stop
         elif key==Qt.Key_M and not ctrl:action=self.add_cue
+        elif key==Qt.Key_V and not ctrl:action=lambda:self.mode('volume')
         elif key==Qt.Key_I and ctrl:action=self.split
         elif key==Qt.Key_Z and ctrl:action=lambda:self.undo(shift)
         elif key in (Qt.Key_Return,Qt.Key_Enter) and ctrl:action=self.assign_music
         elif key==Qt.Key_Delete:action=self.delete
+        elif key in (Qt.Key_Up,Qt.Key_Down) and alt:
+            c=self.project.find(self.timeline.selected_id)
+            if c:action=lambda:self.change_clip_gain(max(-60,min(24,c.gain+(1 if key==Qt.Key_Up else -1))))
         elif key==Qt.Key_Up:action=lambda:self.select_track(0)
         elif key==Qt.Key_Down:action=lambda:self.select_track(1)
         elif key==Qt.Key_Home:action=lambda:self.seek(0)

@@ -8,12 +8,12 @@ import zipfile
 import tarfile
 import hashlib
 ROOT=Path(__file__).resolve().parent
-VERSION='0.1.2'
+VERSION='0.1.3'
 DIST=ROOT/'dist'
 DIST.mkdir(exist_ok=True)
 # Explicit source list: never ship repository metadata, recordings or caches.
 sources=[ROOT/name for name in ['README.md','LICENSE','CHANGELOG.md','.gitignore','build.py','run.sh']]
-for directory in ['compilando','assets','tests','docs']:
+for directory in ['compilando','assets','tests','docs','packaging','.github']:
     sources.extend(p for p in (ROOT/directory).rglob('*') if p.is_file() and '__pycache__' not in p.parts and p.suffix!='.pyc')
 sources=sorted(sources)
 with tempfile.TemporaryDirectory(prefix='compilando-deb-') as tmp:
