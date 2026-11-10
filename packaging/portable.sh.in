@@ -1,0 +1,67 @@
+#!/bin/sh
+# Compilando Studio: self-extracting source launcher, GPL-3.0-or-later.
+set -eu
+fail() {
+    printf '%s\n' "$1" >&2
+    if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+        if command -v zenity >/dev/null 2>&1; then
+            zenity --error --title='Compilando Studio' --text="$1" 2>/dev/null || :
+        elif command -v kdialog >/dev/null 2>&1; then
+            kdialog --error "$1" 2>/dev/null || :
+        fi
+    fi
+    exit 1
+}
+if [ "${1:-}" = '--help' ]; then
+    cat <<'HELP'
+Compilando Studio @VERSION@ · ejecutable para GNU/Linux
+Uso: ./Compilando-Studio-@VERSION@-Linux.run [audio | --episode carpeta --voice audio]
+  --check        Comprueba Python, Qt, NumPy y FFmpeg sin abrir la app.
+  --extract DIR  Extrae el código y la documentación en un directorio vacío.
+No instala paquetes. Requiere Python 3.10+, NumPy, PyQt5, Qt Multimedia y FFmpeg.
+HELP
+    exit 0
+fi
+if [ "${1:-}" != '--extract' ]; then
+    command -v python3 >/dev/null 2>&1 || fail 'Falta Python 3.10 o posterior. Consulta los requisitos de la release.'
+    python3 - <<'PY' || fail 'Faltan dependencias. Consulta los requisitos de la release e instala Python 3.10+, NumPy, PyQt5, Qt Multimedia y FFmpeg con libmp3lame.'
+import sys, shutil, subprocess
+if sys.version_info < (3, 10):
+    raise SystemExit('Se necesita Python 3.10 o posterior.')
+try:
+    import numpy
+    from PyQt5 import QtCore, QtGui, QtWidgets, QtMultimedia
+except ImportError as exc:
+    raise SystemExit(str(exc))
+for command in ('ffmpeg', 'ffprobe'):
+    if not shutil.which(command):
+        raise SystemExit('Falta ' + command)
+result = subprocess.run(['ffmpeg', '-hide_banner', '-encoders'], capture_output=True, text=True)
+if result.returncode or 'libmp3lame' not in result.stdout:
+    raise SystemExit('FFmpeg debe incluir libmp3lame para exportar MP3.')
+print('Dependencias disponibles: Python, NumPy, Qt Multimedia y FFmpeg/MP3.')
+PY
+    if [ "${1:-}" = '--check' ]; then exit 0; fi
+fi
+work=$(mktemp -d "${TMPDIR:-/tmp}/compilando-run.XXXXXXXX")
+trap 'rm -rf -- "$work"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+line=$(awk '/^__COMPILANDO_PAYLOAD__$/ { print NR + 1; exit }' "$0")
+tail -n "+$line" "$0" > "$work/source.tar.gz"
+printf '%s  %s\n' '@SHA256@' "$work/source.tar.gz" | sha256sum -c - >/dev/null 2>&1 || fail 'La descarga está incompleta o dañada. Descarga de nuevo el archivo .run.'
+if [ "${1:-}" = '--extract' ]; then
+    [ "$#" -eq 2 ] || fail 'Uso: --extract DIRECTORIO_VACÍO'
+    [ ! -e "$2" ] || [ -d "$2" ] || fail 'El destino no es un directorio.'
+    mkdir -p -- "$2"
+    [ -z "$(find "$2" -mindepth 1 -maxdepth 1 -print -quit)" ] || fail 'El destino debe estar vacío; no se ha sobrescrito ningún archivo.'
+    tar -xzf "$work/source.tar.gz" -C "$2" --strip-components=1
+    printf 'Código extraído en: %s\n' "$2"
+    exit 0
+fi
+mkdir "$work/app"
+tar -xzf "$work/source.tar.gz" -C "$work/app" --strip-components=1
+# Keep the caller's working directory so relative audio/project paths still work.
+PYTHONPATH="$work/app${PYTHONPATH:+:$PYTHONPATH}" python3 -B -m compilando "$@"
+exit $?
+__COMPILANDO_PAYLOAD__
